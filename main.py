@@ -6,12 +6,16 @@ import string
 import gensim
 import numpy as np
 from Perceptron import SimplePerceptron
-from sklearn.metrics import confusion_matrix
+from sklearn.metrics import classification_report, confusion_matrix, f1_score, roc_auc_score, roc_curve
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.ensemble import RandomForestClassifier
+import seaborn as sns
+from matplotlib import pyplot
 
 pData = []
 n_topicos = 100
 label = pd.DataFrame()
-n_instancias = 10
+n_instancias = 100
 
 def preprocesar(c):
     wnl = WordNetLemmatizer()
@@ -41,9 +45,7 @@ def preprocesar(c):
 
 def cargar_datos():
     df = pd.read_csv('datos/train.csv')
-    df = df[:n_instancias]
-    global label
-    label = df[['label']]
+    #df = df[:n_instancias]
     df=df.drop(columns=['title', 'id', 'author'])
     df['text'], eliminar=preprocesar(df['text'])
     eliminar=list(dict.fromkeys(eliminar))
@@ -67,13 +69,48 @@ def lda():
         i+=1
     return(matrix)  
 
+def entrenar_modelo(X_train, X_test, y_train, y_test, depth, cr):
+    dTree = RandomForestClassifier(min_samples_split=depth, criterion= cr)
+
+    dTree.fit(X_train, y_train)
+    prob = dTree.predict_proba(X_test)
+    y_pred = dTree.predict(X_test)
+    print('\nRESULTADOS:\n')
+    print(f1_score(y_test, y_pred, average='weighted'))
+    print(classification_report(y_test, y_pred))
+    print(confusion_matrix(y_test, y_pred))
+    return y_pred, prob
+
 if __name__ =="__main__":
+    pd.options.mode.chained_assignment = None
     pData = cargar_datos()
+    label = pData['label']
     pData = lda().tolist()
     X = pd.DataFrame(pData)
+    X = X.drop(X.columns[[0]], axis=1)
     X_train, X_test, y_train, y_test = train_test_split(X.values, label.values, test_size=0.3)
-    perceptron = SimplePerceptron()
-
-    perceptron.fit(X_train, y_train)
-    y_pred = perceptron.predict(X_test)
-    print(confusion_matrix(y_test, y_pred))
+    criterion = ["gini", "entropy"]
+    
+    for i in range(2,11,2):
+        for j in range(0,2):
+            y_pred, prob = entrenar_modelo(X_train, X_test, y_train, y_test, i, criterion[j])
+            lr_probs = prob[:, 1]
+            ns_probs = [0 for _ in range(len(y_test))]
+            ns_auc = roc_auc_score(y_test, ns_probs)
+            lr_auc = roc_auc_score(y_test, lr_probs)
+        
+            print('Sin entrenar: ROC AUC=%.3f' % (ns_auc))
+            print('Tree: ROC AUC=%.3f' % (lr_auc))
+        
+            ns_fpr, ns_tpr, _ = roc_curve(y_test, ns_probs)
+            lr_fpr, lr_tpr, _ = roc_curve(y_test, lr_probs)
+            
+            pyplot.plot(lr_fpr, lr_tpr, marker='.', label='Tree ' + str(i) + " " + criterion[j])
+    
+    pyplot.plot(ns_fpr, ns_tpr, linestyle='--', label='Sin entrenar')
+    
+    
+    pyplot.xlabel('Tasa de Falsos Positivos')
+    pyplot.ylabel('Tasa de Verdaderos Positivos')
+    pyplot.legend()
+    pyplot.show()
